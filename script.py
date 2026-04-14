@@ -720,7 +720,7 @@ async def auditar_servidor(servidor, pw):
     
     print(f"\n--- Iniciando revisión en {name} ({ip}) ---")
 
-    browser = await pw.chromium.launch(headless=False)
+    browser = await pw.chromium.launch(headless=True)
     context = await browser.new_context(ignore_https_errors=True)
     page = await context.new_page()
 
