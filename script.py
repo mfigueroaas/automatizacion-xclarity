@@ -2,6 +2,7 @@ import asyncio
 import re
 import os
 import json
+import ast
 import csv
 from datetime import datetime
 from pathlib import Path
@@ -30,11 +31,32 @@ def _resolver_path_proyecto(valor_ruta):
 # Cargar variables de entorno desde el .env ubicado junto al script.
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=True)
 
-# Leer la lista de servidores y convertirla de JSON a una lista de Python
+def _parsear_servidores_desde_env(valor):
+    texto = str(valor or "").strip()
+    if not texto:
+        raise ValueError("SERVIDORES_JSON esta vacio")
+
+    # Acepta formato con comillas envolventes: '[]' o "[]".
+    if (texto.startswith("'") and texto.endswith("'")) or (texto.startswith('"') and texto.endswith('"')):
+        texto = texto[1:-1].strip()
+
+    try:
+        data = json.loads(texto)
+    except json.JSONDecodeError:
+        # Fallback para formatos estilo Python con comillas simples.
+        data = ast.literal_eval(texto)
+
+    if not isinstance(data, list):
+        raise ValueError("SERVIDORES_JSON debe ser una lista")
+
+    return data
+
+
+# Leer la lista de servidores y convertirla de JSON a una lista de Python.
 try:
-    SERVIDORES = json.loads(os.getenv("SERVIDORES_JSON", ""))
+    SERVIDORES = _parsear_servidores_desde_env(os.getenv("SERVIDORES_JSON", ""))
 except Exception as e:
-    print("Error leyendo SERVIDORES_JSON del .env. Verifica el formato.")
+    print(f"Error leyendo SERVIDORES_JSON en .env: {e}")
     SERVIDORES = []
 
 CSV_PATH = BASE_DIR / "auditoria_xclarity.csv"
@@ -816,7 +838,7 @@ async def auditar_servidor(servidor, pw):
 async def main():
     # Si la lista está vacía, detener el script
     if not SERVIDORES:
-        print("No hay servidores configurados. Revisa el archivo.env")
+        print("No hay servidores configurados. Revisa el archivo .env")
         return
 
     if not GSHEETS_ENABLED:
@@ -835,9 +857,16 @@ async def main():
     if SAVE_LOCAL_CSV:
         inicializar_csv(CSV_PATH)
 
-    async with async_playwright() as pw:
-        for server in SERVIDORES:
-            await auditar_servidor(server, pw)
+    try:
+        async with async_playwright() as pw:
+            for server in SERVIDORES:
+                await auditar_servidor(server, pw)
+    except asyncio.CancelledError:
+        print("Inicio de Playwright cancelado. Si no lo cancelaste manualmente, ejecuta: playwright install chromium")
+        return
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Ejecucion interrumpida por el usuario.")
