@@ -65,7 +65,7 @@ GSHEETS_SPREADSHEET = os.getenv("GOOGLE_SHEETS_SPREADSHEET", "")
 GSHEETS_WORKSHEET = os.getenv("GOOGLE_SHEETS_WORKSHEET", "auditoria")
 GSHEETS_CREDENTIALS_FILE = os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE", "credenciales.json")
 SAVE_LOCAL_CSV = os.getenv("SAVE_LOCAL_CSV", "false").lower() in ("1", "true", "yes", "si")
-CSV_HEADERS = [
+FIELD_KEYS = [
     "anio",
     "mes",
     "dia",
@@ -82,6 +82,23 @@ CSV_HEADERS = [
     "error",
 ]
 
+SHEET_HEADERS = [
+    "Año",
+    "Mes",
+    "Día",
+    "Hora",
+    "Servidor",
+    "IP",
+    "Anomalías de salud",
+    "Eventos activos",
+    "Temperatura CPU1 (°C)",
+    "Temperatura CPU2 (°C)",
+    "Estado de consola",
+    "Estado general",
+    "Detalle de alerta",
+    "Error",
+]
+
 _GSHEET_WS = None
 _GSHEET_INICIALIZADO = False
 
@@ -90,9 +107,9 @@ def aplicar_formato_tabla_sheets(ws):
     """Aplica formato visual de tabla para facilitar filtros y analisis."""
     try:
         spreadsheet = ws.spreadsheet
-        total_cols = len(CSV_HEADERS)
+        total_cols = len(FIELD_KEYS)
         # Columna estado_general para formato condicional (A=0)
-        col_estado_general = CSV_HEADERS.index("estado_general")
+        col_estado_general = FIELD_KEYS.index("estado_general")
 
         requests = [
             {
@@ -447,7 +464,7 @@ def inicializar_csv(ruta_csv):
     if not ruta_csv.exists():
         with ruta_csv.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter=';')
-            writer.writerow(CSV_HEADERS)
+            writer.writerow(FIELD_KEYS)
         return
 
     # Migrar formato anterior (con coma y/o columna captura) al formato actual
@@ -462,7 +479,7 @@ def inicializar_csv(ruta_csv):
     requiere_migracion = (
         delimiter != ';'
         or "captura" in headers_actuales
-        or headers_actuales != CSV_HEADERS
+        or headers_actuales != FIELD_KEYS
     )
 
     if not requiere_migracion:
@@ -470,7 +487,7 @@ def inicializar_csv(ruta_csv):
 
     with ruta_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f, delimiter=';')
-        writer.writerow(CSV_HEADERS)
+        writer.writerow(FIELD_KEYS)
         for row in rows:
             time_parts = _time_parts_from_timestamp_text(row.get("timestamp", ""))
             health = row.get("health_anomalias", "")
@@ -568,12 +585,12 @@ def _obtener_worksheet_sheets():
             ws = spreadsheet.add_worksheet(
                 title=GSHEETS_WORKSHEET,
                 rows=2000,
-                cols=max(20, len(CSV_HEADERS) + 5),
+                cols=max(20, len(FIELD_KEYS) + 5),
             )
 
         encabezado_actual = ws.row_values(1)
-        if encabezado_actual != CSV_HEADERS:
-            ws.update(values=[CSV_HEADERS], range_name="A1")
+        if encabezado_actual != SHEET_HEADERS:
+            ws.update(values=[SHEET_HEADERS], range_name="A1")
 
         aplicar_formato_tabla_sheets(ws)
         _normalizar_columna_hora_sheets(ws)
@@ -592,7 +609,7 @@ def sincronizar_resultado_sheets(fila):
         return False
 
     try:
-        valores = [fila.get(col, "") for col in CSV_HEADERS]
+        valores = [fila.get(col, "") for col in FIELD_KEYS]
         ws.append_row(valores, value_input_option="USER_ENTERED")
         return True
     except Exception as e:
