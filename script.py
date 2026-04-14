@@ -62,9 +62,10 @@ except Exception as e:
 CSV_PATH = BASE_DIR / "auditoria_xclarity.csv"
 GSHEETS_ENABLED = os.getenv("GOOGLE_SHEETS_ENABLED", "false").lower() in ("1", "true", "yes", "si")
 GSHEETS_SPREADSHEET = os.getenv("GOOGLE_SHEETS_SPREADSHEET", "")
-GSHEETS_WORKSHEET = os.getenv("GOOGLE_SHEETS_WORKSHEET", "auditoria")
+GSHEETS_WORKSHEET = os.getenv("GOOGLE_SHEETS_WORKSHEET_XCLARITY", os.getenv("GOOGLE_SHEETS_WORKSHEET", "auditoria"))
 GSHEETS_CREDENTIALS_FILE = os.getenv("GOOGLE_SHEETS_CREDENTIALS_FILE", "credenciales.json")
 SAVE_LOCAL_CSV = os.getenv("SAVE_LOCAL_CSV", "false").lower() in ("1", "true", "yes", "si")
+TIMEZONE_NAME = os.getenv("TZ", "America/Santiago")
 FIELD_KEYS = [
     "anio",
     "mes",
@@ -99,8 +100,27 @@ SHEET_HEADERS = [
     "Error",
 ]
 
+SEL_LOGIN_USER = "User name"
+SEL_LOGIN_PASS = "Password"
+SEL_HEALTH_TAB = ".el-tabs__item:has-text('Health Summary')"
+SEL_HEALTH_ANOMALIES = ".hwMsgType.msgWarning,.hwMsgType.msgCritical"
+SEL_EVENTS_TAB = ".el-tabs__item"
+SEL_EVENTS_TAB_TEXT = "Active System Events"
+SEL_CPU_CONTAINER = ".homeCpuTemp"
+SEL_CPU_VALUE = ".cpu-temperature-data"
+SEL_CAPTURE_BUTTON = "Capture Screen"
+
 _GSHEET_WS = None
 _GSHEET_INICIALIZADO = False
+
+
+def _obtener_zona_horaria_local():
+    try:
+        return ZoneInfo(TIMEZONE_NAME)
+    except Exception:
+        if TIMEZONE_NAME != "America/Santiago":
+            print(f"[Warn] TZ invalida: {TIMEZONE_NAME}. Usando America/Santiago.")
+        return ZoneInfo("America/Santiago")
 
 
 def aplicar_formato_tabla_sheets(ws):
@@ -702,8 +722,8 @@ async def auditar_servidor(servidor, pw):
     name = servidor['name']
     user = servidor['user']
     password = servidor['password']
-    tz_chile = ZoneInfo("America/Santiago")
-    now_dt = datetime.now(tz_chile)
+    tz_local = _obtener_zona_horaria_local()
+    now_dt = datetime.now(tz_local)
     time_parts = _build_time_parts(now_dt)
 
     errores_salud = ""
@@ -727,20 +747,20 @@ async def auditar_servidor(servidor, pw):
     try:
         # --- LOGIN (Usando credenciales individuales del .env) ---
         await page.goto(f"https://{ip}/#/login")
-        await page.get_by_placeholder("User name").fill(user)
-        await page.get_by_placeholder("Password").fill(password)
+        await page.get_by_placeholder(SEL_LOGIN_USER).fill(user)
+        await page.get_by_placeholder(SEL_LOGIN_PASS).fill(password)
         await page.keyboard.press("Enter")
 
         await page.wait_for_load_state("networkidle", timeout=30000)
-        await page.wait_for_selector(".el-tabs__item:has-text('Health Summary')", timeout=30000)
+        await page.wait_for_selector(SEL_HEALTH_TAB, timeout=30000)
         await page.wait_for_timeout(5000)
         
         # --- A. HEALTH SUMMARY ---
-        errores_salud = await page.locator(".hwMsgType.msgWarning,.hwMsgType.msgCritical").count()
+        errores_salud = await page.locator(SEL_HEALTH_ANOMALIES).count()
         if errores_salud == 0:
             print("[✅] Health Summary: Todos los 8 íconos operativos (Verde).")
         else:
-            salud_locator = page.locator(".hwMsgType.msgWarning,.hwMsgType.msgCritical")
+            salud_locator = page.locator(SEL_HEALTH_ANOMALIES)
             detalles_raw = await salud_locator.all_inner_texts()
             detalles_salud = [re.sub(r"\s+", " ", t).strip() for t in detalles_raw if str(t).strip()]
             print(f"[❌] Health Summary: Se detectaron {errores_salud} anomalías en el hardware.")
@@ -748,7 +768,7 @@ async def auditar_servidor(servidor, pw):
                 print(f"[ℹ️] Detalles Health Summary: {' | '.join(detalles_salud[:3])}")
 
         # --- B. ACTIVE SYSTEM EVENTS ---
-        events_tab = page.locator(".el-tabs__item", has_text="Active System Events")
+        events_tab = page.locator(SEL_EVENTS_TAB, has_text=SEL_EVENTS_TAB_TEXT)
         events_text = await events_tab.inner_text()
         
         match = re.search(r"\((\d+)\)", events_text)
@@ -763,7 +783,7 @@ async def auditar_servidor(servidor, pw):
 
         # --- C. TEMPERATURA CPU ---
         for cpu in ["CPU1", "CPU2"]:
-            temp_locator = page.locator(".homeCpuTemp").filter(has_text=cpu).locator(".cpu-temperature-data")
+            temp_locator = page.locator(SEL_CPU_CONTAINER).filter(has_text=cpu).locator(SEL_CPU_VALUE)
             if await temp_locator.count() > 0:
                 temp_text = await temp_locator.inner_text()
                 match_temp = re.search(r"-?\d+", temp_text)
@@ -787,7 +807,7 @@ async def auditar_servidor(servidor, pw):
         # --- D. REMOTE CONSOLE PREVIEW (Análisis de Color) ---
         print("[*] Solicitando captura original al servidor para validar pantalla negra...")
         async with page.expect_download(timeout=30000) as download_info:
-            await page.get_by_role("button", name="Capture Screen").click()
+            await page.get_by_role("button", name=SEL_CAPTURE_BUTTON).click()
         
         download = await download_info.value
         ruta_captura = f"captura_{name}.png"

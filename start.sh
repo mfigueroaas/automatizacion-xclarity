@@ -4,7 +4,7 @@ set -euo pipefail
 echo "--- Iniciando tunel VPN de Fortinet ---"
 
 VPN_HOST="${VPN_HOST:-}"
-VPN_PORT="${VPN_PORT:-443}"
+VPN_PORT="${VPN_PORT:-}"
 VPN_USER="${VPN_USER:-}"
 VPN_PASS="${VPN_PASS:-}"
 VPN_CERT="${VPN_CERT:-}"
