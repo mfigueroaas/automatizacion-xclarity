@@ -14,7 +14,6 @@ if [ -z "$VPN_HOST" ] || [ -z "$VPN_USER" ] || [ -z "$VPN_PASS" ] || [ -z "$VPN_
   exit 1
 fi
 
-# En LXC normalmente se monta /app/data/credenciales.json.
 if [ -f /app/data/credenciales.json ] && [ ! -e /app/credenciales.json ]; then
   ln -s /app/data/credenciales.json /app/credenciales.json
 fi
@@ -50,5 +49,11 @@ fi
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 echo "DNS configurado para salida a Google Sheets."
 
-echo "--- Iniciando script de monitoreo XClarity ---"
-exec python /app/script.py
+# --- EL CAMBIO ESTÁ AQUÍ ---
+if [ -z "${SCRIPT_A_EJECUTAR:-}" ]; then
+    echo "ERROR: No le dijiste a Docker qué script ejecutar (Falta variable SCRIPT_A_EJECUTAR)."
+    exit 1
+else
+    echo "--- Iniciando script: $SCRIPT_A_EJECUTAR ---"
+    exec python "/app/$SCRIPT_A_EJECUTAR"
+fi

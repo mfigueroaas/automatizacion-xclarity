@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY script.py ./
+# --- EL CAMBIO ESTÁ AQUÍ ---
+COPY *.py ./
 COPY start.sh ./
 
 RUN dos2unix /app/start.sh && chmod +x /app/start.sh
