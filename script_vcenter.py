@@ -533,7 +533,11 @@ async def main():
                 print("[vCenter] No hay objetivos configurados. Revisa VCENTER_OBJECTIVES_JSON en el .env")
             else:
                 browser = await pw.chromium.launch(headless=VCENTER_HEADLESS)
-                context = await browser.new_context(ignore_https_errors=True)
+                context = await browser.new_context(
+                    ignore_https_errors=True,
+                    locale="es-ES",
+                    timezone_id="America/Santiago",
+                )
                 page = await context.new_page()
                 try:
                     await page.goto(VCENTER_URL, wait_until="networkidle", timeout=60000)
@@ -564,7 +568,11 @@ async def main():
 
         if ESXI_URL.strip() and ESXI_USER.strip() and ESXI_PASS.strip():
             browser = await pw.chromium.launch(headless=VCENTER_HEADLESS)
-            context = await browser.new_context(ignore_https_errors=True)
+            context = await browser.new_context(
+                ignore_https_errors=True,
+                locale="es-ES",
+                timezone_id="America/Santiago",
+            )
             page = await context.new_page()
             try:
                 esxi_login_url = _build_esxi_login_url(ESXI_URL)
