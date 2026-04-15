@@ -46,8 +46,9 @@ if ! ip addr show ppp0 >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
-echo "DNS configurado para salida a Google Sheets."
+echo "nameserver 192.168.1.63" > /etc/resolv.conf
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+echo "DNS Mixto configurado (Interno Chilemat + Google)."
 
 # --- EL CAMBIO ESTÁ AQUÍ ---
 if [ -z "${SCRIPT_A_EJECUTAR:-}" ]; then
