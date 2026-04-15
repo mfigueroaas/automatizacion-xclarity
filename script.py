@@ -746,14 +746,17 @@ async def auditar_servidor(servidor, pw):
 
     try:
         # --- LOGIN (Usando credenciales individuales del .env) ---
-        await page.goto(f"https://{ip}/#/login")
+        await page.goto(f"https://{ip}/#/login", wait_until="networkidle", timeout=60000)
+        await page.wait_for_selector("input[placeholder='User name']", state="visible", timeout=30000)
+        await page.wait_for_timeout(3000)
         await page.get_by_placeholder(SEL_LOGIN_USER).fill(user)
         await page.get_by_placeholder(SEL_LOGIN_PASS).fill(password)
         await page.keyboard.press("Enter")
 
-        await page.wait_for_load_state("networkidle", timeout=30000)
-        await page.wait_for_selector(SEL_HEALTH_TAB, timeout=30000)
-        await page.wait_for_timeout(5000)
+        await page.wait_for_load_state("networkidle", timeout=60000)
+        await page.wait_for_selector(SEL_HEALTH_TAB, state="visible", timeout=30000)
+        await page.wait_for_selector(SEL_CPU_CONTAINER, state="visible", timeout=30000)
+        await page.wait_for_timeout(3000)
         
         # --- A. HEALTH SUMMARY ---
         errores_salud = await page.locator(SEL_HEALTH_ANOMALIES).count()
@@ -806,6 +809,8 @@ async def auditar_servidor(servidor, pw):
 
         # --- D. REMOTE CONSOLE PREVIEW (Análisis de Color) ---
         print("[*] Solicitando captura original al servidor para validar pantalla negra...")
+        await page.get_by_role("button", name=SEL_CAPTURE_BUTTON).wait_for(state="visible", timeout=30000)
+        await page.wait_for_timeout(2000)
         async with page.expect_download(timeout=30000) as download_info:
             await page.get_by_role("button", name=SEL_CAPTURE_BUTTON).click()
         

@@ -409,6 +409,8 @@ async def _extraer_metricas_bloque(page, nombre_bloque):
 async def extraer_datos_vcenter(page, nombre_objetivo):
     print(f"\n--- Analizando: {nombre_objetivo} ---")
     await _seleccionar_objetivo_vcenter(page, nombre_objetivo)
+    # Buffer corto para permitir que el frontend termine de poblar métricas.
+    await page.wait_for_timeout(3000)
 
     cpu = await _extraer_metricas_bloque(page, "CPU")
     memory = await _extraer_metricas_bloque(page, "Memory")
@@ -534,8 +536,7 @@ async def main():
                 context = await browser.new_context(ignore_https_errors=True)
                 page = await context.new_page()
                 try:
-                    await page.goto(VCENTER_URL, wait_until="domcontentloaded")
-                    await page.wait_for_timeout(2000)
+                    await page.goto(VCENTER_URL, wait_until="networkidle", timeout=60000)
                     
                     # Hacer clic en el botón "Iniciar vSphere Client (HTML5)"
                     print("[vCenter] Iniciando vSphere Client...")
@@ -553,6 +554,7 @@ async def main():
 
                     await page.wait_for_load_state("networkidle", timeout=30000)
                     await page.wait_for_selector(f"{SEL_INVENTORY_TREE}, {SEL_SEARCH_BAR}", timeout=30000)
+                    await page.wait_for_timeout(3000)
                     await _expandir_arbol_inventario(page)
 
                     for objetivo in objetivos:
@@ -566,8 +568,7 @@ async def main():
             page = await context.new_page()
             try:
                 esxi_login_url = _build_esxi_login_url(ESXI_URL)
-                await page.goto(esxi_login_url, wait_until="domcontentloaded")
-                await page.wait_for_timeout(2000)
+                await page.goto(esxi_login_url, wait_until="networkidle", timeout=60000)
 
                 # Flujo principal grabado con inspector
                 try:
@@ -592,7 +593,7 @@ async def main():
                     await page.wait_for_selector(SEL_ESXI_METRICS, timeout=30000)
                 except Exception:
                     await page.get_by_text("CPU LIBRE").first.wait_for(timeout=30000)
-                await page.wait_for_timeout(1500)
+                await page.wait_for_timeout(3000)
                 await extraer_datos_esxi(page, ESXI_NAME or ESXI_URL)
             finally:
                 await browser.close()
