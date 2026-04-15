@@ -540,24 +540,16 @@ async def main():
                     # Hacer clic en el botón "Iniciar vSphere Client (HTML5)"
                     print("[vCenter] Iniciando vSphere Client...")
                     await page.locator(SEL_VCENTER_CLIENT_BUTTON).click(timeout=10000)
-                    await page.wait_for_url("**/ui/", wait_until="domcontentloaded", timeout=30000)
-                    await page.wait_for_timeout(2000)
+                    
+                    # Esperar la redirección lenta del SSO de VMware (le damos hasta 60 segundos)
+                    print("[vCenter] Esperando redirección al login SSO (puede tardar)...")
+                    await page.wait_for_selector(SEL_LOGIN_USER, state="visible", timeout=60000)
                     
                     # Login
-                    try:
-                        await page.get_by_role("textbox", name="example@domain.local").fill(VCENTER_USER, timeout=10000)
-                    except Exception:
-                        await page.locator(SEL_LOGIN_USER).first.fill(VCENTER_USER, timeout=10000)
-
-                    try:
-                        await page.get_by_role("textbox", name="Contraseña").fill(VCENTER_PASS, timeout=10000)
-                    except Exception:
-                        await page.locator(SEL_LOGIN_PASS).first.fill(VCENTER_PASS, timeout=10000)
-
-                    try:
-                        await page.get_by_role("button", name="Iniciar").click(timeout=10000)
-                    except Exception:
-                        await page.locator(SEL_LOGIN_BUTTON).first.click(timeout=10000)
+                    print("[vCenter] Pantalla de login detectada. Ingresando credenciales...")
+                    await page.locator(SEL_LOGIN_USER).first.fill(VCENTER_USER)
+                    await page.locator(SEL_LOGIN_PASS).first.fill(VCENTER_PASS)
+                    await page.locator(SEL_LOGIN_BUTTON).first.click(timeout=10000)
 
                     await page.wait_for_load_state("networkidle", timeout=30000)
                     await page.wait_for_selector(f"{SEL_INVENTORY_TREE}, {SEL_SEARCH_BAR}", timeout=30000)
