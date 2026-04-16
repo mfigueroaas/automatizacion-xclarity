@@ -8,7 +8,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 
 echo "=== INICIANDO MONITOREO GENERAL - $(date) ==="
 
-echo "-> Fase 1: Escaneando Hardware (XClarity)..."
+echo "-> Fase 1: Escaneando iDRAC..."
 docker run --rm \
   --privileged \
   --cap-add=NET_ADMIN \
@@ -18,10 +18,13 @@ docker run --rm \
   --env-file "$REPO_DIR/data/.env" \
   -v "$REPO_DIR/data:/app/data" \
   -v /etc/localtime:/etc/localtime:ro \
-  -e SCRIPT_A_EJECUTAR="script.py" \
+  -e SCRIPT_A_EJECUTAR="script_idrac.py" \
   monitor-vpn
 
-echo "-> Fase 2: Escaneando Virtualizacion (vCenter)..."
+echo "-> Fase 1 Terminada. Dando 15 segundos al Firewall para limpiar la sesion VPN..."
+sleep 15
+
+echo "-> Fase 2: Escaneando ESXi directo..."
 docker run --rm \
   --privileged \
   --cap-add=NET_ADMIN \
@@ -31,7 +34,7 @@ docker run --rm \
   --env-file "$REPO_DIR/data/.env" \
   -v "$REPO_DIR/data:/app/data" \
   -v /etc/localtime:/etc/localtime:ro \
-  -e SCRIPT_A_EJECUTAR="script_vcenter.py" \
+  -e SCRIPT_A_EJECUTAR="script_esxi.py" \
   monitor-vpn
 
 echo "=== FIN DEL MONITOREO ==="
