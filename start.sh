@@ -46,34 +46,28 @@ if ! ip addr show ppp0 >/dev/null 2>&1; then
   exit 1
 fi
 
-# --- CONFIGURACIÓN DE RED Y ENRUTAMIENTO ---
+# --- CORRECCIÓN CRÍTICA: DAR TIEMPO A LA VPN ---
+echo "Esperando 3 segundos a que la interfaz se estabilice..."
+sleep 3
 
-# Leer archivo .env manualmente para asegurar que Bash vea las variables
-if [ -f "/app/data/.env" ]; then
-    export $(grep -v '^#' /app/data/.env | xargs)
-fi
+# --- CONFIGURACIÓN DE RED Y ENRUTAMIENTO ---
+# Utilizamos variables por defecto seguras por si no vienen en el .env
 
 # 1. Configuración de DNS
-if [ -n "${DNS_EMPRESA:-}" ]; then
-    echo "nameserver $DNS_EMPRESA" > /etc/resolv.conf
-    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-    echo "DNS Mixto configurado (Interno: $DNS_EMPRESA + Google)."
-else
-    # Si por alguna razón falla, volver al valor por defecto que funcionaba
-    echo "nameserver 192.168.1.63" > /etc/resolv.conf
-    echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-    echo "DNS Mixto configurado (Hardcodeado)."
-fi
+DNS_EMPRESA="${DNS_EMPRESA:-192.168.1.63}"
+echo "nameserver $DNS_EMPRESA" > /etc/resolv.conf
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+echo "DNS Mixto configurado ($DNS_EMPRESA + Google)."
 
 # 2. Configuración de Rutas Estáticas
-if [ -n "${ESXI_IP_RUTA:-}" ]; then
-    ip route add "$ESXI_IP_RUTA/32" dev ppp0
-    echo "Ruta forzada hacia ESXi ($ESXI_IP_RUTA) a través de ppp0."
-else
-    # Si falla la variable, inyectar directamente la IP para no romper producción
-    ip route add 192.168.1.4/32 dev ppp0
-    echo "Ruta forzada hacia ESXi (192.168.1.4 - Hardcodeado) a través de ppp0."
-fi
+ESXI_IP_RUTA="${ESXI_IP_RUTA:-192.168.1.4}"
+
+# Inyectar ruta (El '|| true' evita que falle si la ruta ya existe)
+ip route add "$ESXI_IP_RUTA/32" dev ppp0 || true
+echo "Ruta forzada hacia ESXi ($ESXI_IP_RUTA) a través de ppp0."
+
+echo "Esperando 2 segundos finales antes de lanzar Python..."
+sleep 2
 # ---------------------------------------------------
 
 # --- EJECUCIÓN DEL SCRIPT ---
