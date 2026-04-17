@@ -50,6 +50,10 @@ echo "nameserver 192.168.1.63" > /etc/resolv.conf
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 echo "DNS Mixto configurado (Interno Chilemat + Google)."
 
+# Forzar a Linux a que esta IP específica siempre pase por la VPN
+ip route add 192.168.1.4/32 dev ppp0
+# -----------------------------
+
 # --- EL CAMBIO ESTÁ AQUÍ ---
 if [ -z "${SCRIPT_A_EJECUTAR:-}" ]; then
     echo "ERROR: No le dijiste a Docker qué script ejecutar (Falta variable SCRIPT_A_EJECUTAR)."
