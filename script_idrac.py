@@ -51,17 +51,20 @@ IDRAC_THERMAL_MENU_SELECTOR = os.getenv("IDRAC_THERMAL_MENU_SELECTOR", "a:has-te
 IDRAC_TEMPERATURE_TAB_SELECTOR = os.getenv("IDRAC_TEMPERATURE_TAB_SELECTOR", "#li_T10")
 IDRAC_TEMP_TABLE_SELECTOR = os.getenv("IDRAC_TEMP_TABLE_SELECTOR", "#temp_probe_table")
 
-IDRAC_FRAME_PRIORITY = ("da", "treelist", "blank", "virtual", "title", "snb", "lsnb", "hidden_frame")
 IDRAC_CONDITION_PANEL_CANDIDATES = [
     "#HtmlTable_sdrverInfo",
+    "#summaryTable",
+    "#systemSummary",
     "#sdrverInfo",
     "#serverinfo",
     "table[id*='sdrverInfo']",
-    "table:has(.status_ok)",
-    "table:has-text('CPU')",
+    "table:has-text('Salud')",
+    "table:has-text('Health')",
 ]
 IDRAC_CONSOLE_PREVIEW_CANDIDATES = [
     "#console_preview_img_id",
+    "#vKvmPreview",
+    "img[id*='vKvm']",
     "img[id*='console']",
     "img[id*='preview']",
     "img[src*='preview']",
@@ -69,6 +72,8 @@ IDRAC_CONSOLE_PREVIEW_CANDIDATES = [
 IDRAC_THERMAL_MENU_CANDIDATES = [
     "a:has-text('Alimentación / Térmico')",
     "a:has-text('Power / Thermal')",
+    "a:has-text('Thermal')",
+    "a:has-text('Alimentación')",
     "a:has-text('Térmico')",
 ]
 IDRAC_TEMPERATURE_TAB_CANDIDATES = [
@@ -81,6 +86,7 @@ IDRAC_TEMP_TABLE_CANDIDATES = [
     "table[id*='temp']",
     "table:has-text('CPU')",
     "table:has-text('Temperaturas')",
+    "table:has-text('System')",
 ]
 
 FIELD_KEYS = [
@@ -166,80 +172,6 @@ async def _fill_first_available(page, selectors, value, timeout=10000):
             last_error = exc
             continue
     raise RuntimeError(f"No se pudo completar el campo usando selectores: {selectors}. Ultimo error: {last_error}")
-
-
-def _obtener_frames_prioritarios(page):
-    frames = []
-    vistos = set()
-    for frame_name in IDRAC_FRAME_PRIORITY:
-        frame = page.frame(name=frame_name)
-        if frame is not None and id(frame) not in vistos:
-            frames.append(frame)
-            vistos.add(id(frame))
-    for frame in page.frames:
-        if id(frame) not in vistos:
-            frames.append(frame)
-            vistos.add(id(frame))
-    return frames
-
-
-async def _buscar_locator_visible(page, selectors, frame_names=None, timeout=10000):
-    frames = _obtener_frames_prioritarios(page)
-    allowed = None
-    if frame_names:
-        allowed = {"" if name is None else str(name) for name in frame_names}
-
-    # First pass: preferred frame names.
-    if allowed is not None:
-        for frame in frames:
-            frame_name = frame.name or ""
-            if frame_name not in allowed:
-                continue
-            for selector in selectors:
-                try:
-                    locator = frame.locator(selector).first
-                    await locator.wait_for(state="visible", timeout=timeout)
-                    return frame, selector, locator
-                except Exception:
-                    continue
-
-    # Second pass: any frame (fallback for dynamic/unnamed frames).
-    for frame in frames:
-        for selector in selectors:
-            try:
-                locator = frame.locator(selector).first
-                await locator.wait_for(state="visible", timeout=timeout)
-                return frame, selector, locator
-            except Exception:
-                continue
-    return None, None, None
-
-
-async def _buscar_frame_con_selector(page, selector, frame_names=None, timeout=10000):
-    frame, _selector, locator = await _buscar_locator_visible(page, [selector], frame_names=frame_names, timeout=timeout)
-    return frame, locator
-
-
-async def _invocar_sensor_page(page, sensor_name):
-    for frame in _obtener_frames_prioritarios(page):
-        try:
-            invoked = await frame.evaluate(
-                """
-                (sensor) => {
-                    if (typeof SensorPage === 'function') {
-                        SensorPage(sensor);
-                        return true;
-                    }
-                    return false;
-                }
-                """,
-                sensor_name,
-            )
-            if invoked:
-                return True
-        except Exception:
-            continue
-    return False
 
 
 def inicializar_csv(ruta_csv):
@@ -336,7 +268,10 @@ def _black_screen_analysis(ruta_imagen):
 def _componentes_salud_relevantes(detalles_salud):
     componentes = set()
     for detalle in detalles_salud:
-        txt = detalle.lower()
+        if isinstance(detalle, dict):
+            txt = str(detalle.get("label", "")).lower()
+        else:
+            txt = str(detalle).lower()
         if any(x in txt for x in ["disk", "drive", "storage", "raid", "ssd", "hdd", "nvme", "disco"]):
             componentes.add("disco")
         if any(x in txt for x in ["power", "psu", "fuente", "supply"]):
@@ -404,147 +339,165 @@ async def _login_idrac(page):
 
 
 async def _extraer_condicion_servidor(page):
-    frame = None
-    locator = None
+    da_frame = page.frame_locator('frame[name="da"]')
     result = {"total": 0, "alertas": [], "categorias": []}
-    
-    if IDRAC_CONDITION_PANEL_SELECTOR.strip():
-        frame, locator = await _buscar_frame_con_selector(page, IDRAC_CONDITION_PANEL_SELECTOR, frame_names=("da", "blank", "virtual", None), timeout=8000)
-    
-    if frame is None or locator is None:
-        frame, _selector, locator = await _buscar_locator_visible(page, IDRAC_CONDITION_PANEL_CANDIDATES, frame_names=("da", "blank", "virtual", None), timeout=8000)
+    selectors = _build_selector_candidates(IDRAC_CONDITION_PANEL_SELECTOR, IDRAC_CONDITION_PANEL_CANDIDATES)
 
-    if locator is not None:
-        result = await locator.evaluate(
-            r"""
-            (panel) => {
-                const rows = Array.from(panel.querySelectorAll('tr'));
-                const categorias = [];
-                const alertas = [];
-                for (const tr of rows) {
-                    const cells = Array.from(tr.querySelectorAll('td'));
-                    if (cells.length < 2) continue;
-                    for (let i = 1; i < cells.length; i += 2) {
-                        const label = (cells[i] && cells[i].innerText ? cells[i].innerText : '').replace(/\s+/g, ' ').trim();
-                        if (!label) continue;
-                        const iconCell = cells[i - 1];
-                        const ok = !!(iconCell && iconCell.querySelector('.status_ok'));
-                        categorias.push({ label, ok });
-                        if (!ok) alertas.push(label);
+    for selector in selectors:
+        try:
+            locator = da_frame.locator(selector).first
+            await locator.wait_for(state="visible", timeout=7000)
+            result = await locator.evaluate(
+                r"""
+                (panel) => {
+                    const rows = Array.from(panel.querySelectorAll('tr'));
+                    const categorias = [];
+                    const alertas = [];
+                    for (const tr of rows) {
+                        const cells = Array.from(tr.querySelectorAll('td'));
+                        if (cells.length < 2) continue;
+                        for (let i = 1; i < cells.length; i += 2) {
+                            const label = (cells[i] && cells[i].innerText ? cells[i].innerText : '').replace(/\s+/g, ' ').trim();
+                            if (!label) continue;
+                            const iconCell = cells[i - 1];
+                            const html = (iconCell && iconCell.innerHTML ? iconCell.innerHTML : '').toLowerCase();
+                            const text = (iconCell && iconCell.innerText ? iconCell.innerText : '').toLowerCase();
+                            const ok = !!(
+                                iconCell && (
+                                    iconCell.querySelector('.status_ok, .Status_OK') ||
+                                    (html.includes('ok') && html.includes('img')) ||
+                                    text.includes('ok')
+                                )
+                            );
+                            categorias.push({ label, ok });
+                            if (!ok) alertas.push(label);
+                        }
                     }
+                    return { total: categorias.length, alertas, categorias };
                 }
-                return { total: categorias.length, alertas, categorias };
-            }
-            """
-        )
+                """
+            )
+            if isinstance(result, dict) and result.get("total", 0) > 0:
+                break
+        except Exception:
+            continue
+
     print(f"[iDRAC] Categorías evaluadas: {result.get('total', 0)}")
     if result.get("alertas"):
         print(f"[iDRAC] No verdes: {', '.join(result.get('alertas', []))}")
+    elif result.get("total", 0) == 0:
+        print("[iDRAC] No se encontró el panel de condición.")
     return result
 
 
 async def _capturar_preview_consola(page):
-    frame, _selector, locator = await _buscar_locator_visible(page, _build_selector_candidates(IDRAC_CONSOLE_PREVIEW_SELECTOR, IDRAC_CONSOLE_PREVIEW_CANDIDATES), frame_names=("da", "virtual", "blank", None), timeout=30000)
-    if locator is None:
-        print("[iDRAC] No se encontró la vista previa de consola.")
-        return "NO_NEGRA_ALERTA", 0
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        ruta = Path(tmp.name)
-    try:
-        await locator.screenshot(path=str(ruta))
-        es_negra, porcentaje_negro = _black_screen_analysis(ruta)
-        return ("NEGRA_OK" if es_negra else "NO_NEGRA_ALERTA"), porcentaje_negro
-    finally:
+    da_frame = page.frame_locator('frame[name="da"]')
+    selectors = _build_selector_candidates(IDRAC_CONSOLE_PREVIEW_SELECTOR, IDRAC_CONSOLE_PREVIEW_CANDIDATES)
+
+    for selector in selectors:
         try:
-            ruta.unlink(missing_ok=True)
+            locator = da_frame.locator(selector).first
+            await locator.wait_for(state="visible", timeout=12000)
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                ruta = Path(tmp.name)
+            try:
+                await locator.screenshot(path=str(ruta))
+                es_negra, porcentaje_negro = _black_screen_analysis(ruta)
+                return ("NEGRA_OK" if es_negra else "NO_NEGRA_ALERTA"), porcentaje_negro
+            finally:
+                try:
+                    ruta.unlink(missing_ok=True)
+                except Exception:
+                    pass
         except Exception:
-            pass
+            continue
+
+    print("[iDRAC] No se encontró la vista previa de consola.")
+    return "NO_NEGRA_ALERTA", 0
 
 
 async def _extraer_temperaturas(page):
     rows = []
-    tab_locator = None
+    treelist = page.frame_locator('frame[name="treelist"]')
+    da_frame = page.frame_locator('frame[name="da"]')
+
+    print("[iDRAC] Navegando a sección térmica...")
+    try:
+        menu_selectors = _build_selector_candidates(IDRAC_THERMAL_MENU_SELECTOR, IDRAC_THERMAL_MENU_CANDIDATES)
+        for selector in menu_selectors:
+            try:
+                thermal_menu = treelist.locator(selector).first
+                await thermal_menu.wait_for(state="visible", timeout=5000)
+                await thermal_menu.click(timeout=5000)
+                break
+            except Exception:
+                continue
+    except Exception:
+        print("[iDRAC] No se pudo clickear menú Térmico (puede que ya estemos ahí).")
+
+    await page.wait_for_timeout(1500)
 
     try:
-        _, _, thermal_locator = await _buscar_locator_visible(
-            page,
-            _build_selector_candidates(IDRAC_THERMAL_MENU_SELECTOR, IDRAC_THERMAL_MENU_CANDIDATES),
-            frame_names=("treelist", "da", None),
-            timeout=10000,
-        )
-        if thermal_locator is not None:
-            await thermal_locator.click(timeout=10000)
+        tab_selectors = _build_selector_candidates(IDRAC_TEMPERATURE_TAB_SELECTOR, IDRAC_TEMPERATURE_TAB_CANDIDATES)
+        for selector in tab_selectors:
+            try:
+                temp_tab = da_frame.locator(selector).first
+                await temp_tab.wait_for(state="visible", timeout=5000)
+                await temp_tab.click(timeout=5000)
+                break
+            except Exception:
+                continue
     except Exception:
-        pass
+        print("[iDRAC] No se pudo clickear pestaña Temperaturas.")
 
-    await page.wait_for_timeout(1000)
+    await page.wait_for_timeout(1500)
 
-    try:
-        _, _, tab_locator = await _buscar_locator_visible(
-            page,
-            _build_selector_candidates(IDRAC_TEMPERATURE_TAB_SELECTOR, IDRAC_TEMPERATURE_TAB_CANDIDATES),
-            frame_names=("da", "treelist", None),
-            timeout=10000,
-        )
-        if tab_locator is not None:
-            await tab_locator.click(timeout=10000)
-    except Exception:
-        pass
+    table_selectors = _build_selector_candidates(IDRAC_TEMP_TABLE_SELECTOR, IDRAC_TEMP_TABLE_CANDIDATES)
+    for selector in table_selectors:
+        try:
+            table = da_frame.locator(selector).first
+            await table.wait_for(state="visible", timeout=6000)
+            rows = await table.evaluate(
+                r"""
+                (table) => {
+                    return Array.from(table.querySelectorAll('tbody tr, tr')).map(tr =>
+                        Array.from(tr.querySelectorAll('td')).map(td => td.innerText.replace(/\s+/g, ' ').trim()).join(' | ')
+                    ).filter(text => text);
+                }
+                """
+            )
+            if len(rows) > 1:
+                break
+        except Exception:
+            continue
 
-    if tab_locator is None:
-        if await _invocar_sensor_page(page, "temperatures"):
-            await page.wait_for_timeout(1500)
-
-    await page.wait_for_timeout(1000)
-
-    frame_tabla = None
-    locator_tabla = None
-    if IDRAC_TEMP_TABLE_SELECTOR.strip():
-        frame_tabla, locator_tabla = await _buscar_frame_con_selector(
-            page,
-            IDRAC_TEMP_TABLE_SELECTOR,
-            frame_names=("da", "blank", "virtual", None),
-            timeout=8000,
-        )
-    if frame_tabla is None or locator_tabla is None:
-        frame_tabla, _selector, locator_tabla = await _buscar_locator_visible(
-            page,
-            IDRAC_TEMP_TABLE_CANDIDATES,
-            frame_names=("da", "blank", "virtual", None),
-            timeout=8000,
-        )
-
-    if frame_tabla is None:
+    if not rows:
         print("[iDRAC] No se encontró la tabla de temperaturas.")
         return "", "", []
 
-    rows = await locator_tabla.evaluate(
-        r"""
-        (table) => {
-            const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
-            if (!bodyRows.length) return [];
-            return bodyRows.map(tr => {
-                const cells = Array.from(tr.querySelectorAll('td'));
-                const getCellText = (idx) => (cells[idx] && cells[idx].innerText ? cells[idx].innerText : '').replace(/\s+/g, ' ').trim();
-                return { status: getCellText(1), probe_name: getCellText(2), reading: getCellText(3) };
-            }).filter(row => row.probe_name || row.reading);
-        }
-        """
-    )
     temp_cpu1 = ""
     temp_cpu2 = ""
     detalles = []
-    for row in rows:
-        probe = row.get("probe_name", "")
-        reading = row.get("reading", "")
-        status = row.get("status", "")
-        detalles.append({"probe_name": probe, "reading": reading, "status": status})
-        print(f"[iDRAC] Temperatura: {probe} -> {reading} ({status})")
-        probe_lower = probe.lower()
-        if not temp_cpu1 and "cpu1" in probe_lower:
+
+    for row_text in rows:
+        row_lower = row_text.lower()
+        if "cpu" not in row_lower and "system" not in row_lower:
+            continue
+
+        match = re.search(r"(?<!\d)(\d{2})(?=\s*[cC°]|\s*\|)", row_text)
+        reading = match.group(1) if match else ""
+        if not reading:
+            continue
+
+        detalles.append({"probe_name": row_text, "reading": reading, "status": ""})
+        print(f"[iDRAC] Sensor detectado: {reading}°C en -> {row_text}")
+
+        if not temp_cpu1 and ("cpu1" in row_lower or "cpu 1" in row_lower):
             temp_cpu1 = reading
-        if not temp_cpu2 and "cpu2" in probe_lower:
+        elif not temp_cpu2 and ("cpu2" in row_lower or "cpu 2" in row_lower):
             temp_cpu2 = reading
+
     return temp_cpu1, temp_cpu2, detalles
 
 
@@ -562,16 +515,36 @@ async def main():
         context = await browser.new_context(ignore_https_errors=True, locale="es-ES", timezone_id="America/Santiago")
         page = await context.new_page()
         try:
+            error_detalle = ""
+            health = {"total": 0, "alertas": [], "categorias": []}
+            estado_consola, porcentaje_negro = "NO_NEGRA_ALERTA", 0
+            temp_cpu1, temp_cpu2, detalles_temp = "", "", []
+
             await _login_idrac(page)
-            health = await _extraer_condicion_servidor(page)
-            estado_consola, porcentaje_negro = await _capturar_preview_consola(page)
-            temp_cpu1, temp_cpu2, detalles_temp = await _extraer_temperaturas(page)
+            try:
+                health = await _extraer_condicion_servidor(page)
+            except Exception as e:
+                error_detalle = f"Condition panel: {e}"
+
+            try:
+                estado_consola, porcentaje_negro = await _capturar_preview_consola(page)
+            except Exception as e:
+                pref = f"{error_detalle} | " if error_detalle else ""
+                error_detalle = f"{pref}Preview consola: {e}"
+
+            try:
+                temp_cpu1, temp_cpu2, detalles_temp = await _extraer_temperaturas(page)
+            except Exception as e:
+                pref = f"{error_detalle} | " if error_detalle else ""
+                error_detalle = f"{pref}Temperaturas: {e}"
 
             tz_local = _obtener_zona_horaria_local()
             time_parts = _build_time_parts(datetime.now(tz_local))
 
-            detalle_alerta = construir_detalle_alerta(health.get("alertas", []), temp_cpu1, temp_cpu2, estado_consola, "", detalles_salud=health.get("categorias", []), porcentaje_negro=porcentaje_negro)
-            estado_general = calcular_estado_general(health.get("alertas", []), temp_cpu1, temp_cpu2, estado_consola, "", detalles_salud=health.get("categorias", []), porcentaje_negro=porcentaje_negro)
+            health_anomalias = len(health.get("alertas", []))
+
+            detalle_alerta = construir_detalle_alerta(health_anomalias, temp_cpu1, temp_cpu2, estado_consola, error_detalle, detalles_salud=health.get("categorias", []), porcentaje_negro=porcentaje_negro)
+            estado_general = calcular_estado_general(health_anomalias, temp_cpu1, temp_cpu2, estado_consola, error_detalle, detalles_salud=health.get("categorias", []), porcentaje_negro=porcentaje_negro)
 
             fila_resultado = {
                 "anio": time_parts["anio"],
@@ -580,13 +553,13 @@ async def main():
                 "hora": time_parts["hora"],
                 "servidor": IDRAC_NAME,
                 "ip": IDRAC_URL,
-                "health_anomalias": len(health.get("alertas", [])),
+                "health_anomalias": health_anomalias,
                 "temp_cpu1": temp_cpu1,
                 "temp_cpu2": temp_cpu2,
                 "estado_consola": estado_consola,
                 "estado_general": estado_general,
                 "detalle_alerta": detalle_alerta,
-                "error": "",
+                "error": error_detalle,
             }
 
             if SAVE_LOCAL_CSV:
